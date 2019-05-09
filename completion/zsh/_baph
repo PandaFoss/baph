@@ -1,0 +1,11 @@
+#compdef baph
+
+local -a args
+args=(
+    {-h,--help}'[Display usage]:'
+    {-i,--install}'[Install a package]:'
+    {-s,--search}'[Search the AUR for query]:'
+    {-u,--update}'[Synchronize and update system]:'
+    {-v,--version}'[Show program version and exit]:'
+)
+_arguments -S -s $args
