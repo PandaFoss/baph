@@ -17,7 +17,7 @@ A simple AUR package helper for Arch Linux written in bash.
 Clone this repo and copy `baph` to somewhere on your `$PATH`, usually `/usr/bin/`
 
 ```
-git clone https://bitbucket.org/natemaia/baph.git
+git clone https://github.com/PandaFoss/baph.git
 
 sudo cp baph/baph /usr/bin/baph
 ```
