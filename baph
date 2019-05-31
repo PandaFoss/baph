@@ -16,7 +16,7 @@ use()
 		cat << EOF
  baph v0.6
 EOF
-else
+	else
 	cat <<EOF
 
  baph - Simple helper to search, install, and update AUR packages
@@ -46,17 +46,13 @@ else
 		 baph -uanN
 
 EOF
-fi
-exit 0
+	fi
+	exit 0
 }
 
 msg()
 { # print colour $1 :: then message $2 in bold, usage: msg "color" "text"
-	if [[ $1 ]]; then
-		printf "$1::\e[0m \e[1m$2\e[0m\n"
-	else
-		printf "$2\n"
-	fi
+	[[ $1 ]] && printf "$1::\e[0m \e[1m$2\e[0m\n" || printf "$2\n"
 }
 
 die()
@@ -99,10 +95,7 @@ get()
 
 view()
 { # view PKGBUILD.. usage: view "/path/to/PKGBUILD"
-	if [[ -z $NOVIEW ]] && yesno "View/Edit the PKGBUILD for $pkg"; then
-		${EDITOR:-vi} "$1"
-		return 1
-	fi
+	[[ -z $NOVIEW ]] && yesno "View/Edit the PKGBUILD for $pkg" && { ${EDITOR:-vi} "$1"; return 1; }
 	return 0
 }
 
@@ -133,11 +126,7 @@ deps()
 
 yesno()
 { # ask confirmation if NOCONF is not set, usage: yesno "question"
-	if [[ $NOCONF ]]; then
-		return 0
-	else
-		read -re -p $'\e[34m::\e[0m \e[1m'"$1"$'? [Y/n]\e[0m ' c
-	fi
+	[[ $NOCONF ]] && return 0 || read -re -p $'\e[34m::\e[0m \e[1m'"$1"$'? [Y/n]\e[0m ' c
 	[[ -z $c || $c == 'y' || $c == 'Y' ]]
 }
 
@@ -214,15 +203,15 @@ update()
 
 	if (( ${#APKGS[@]} > 0 )); then
 		msg '\e[34m' "Synchronizing AUR package versions..."
-		typeset -a up=()
-		typeset i="" n="" o="" q="${APKGS[*]}"
+		typeset -a up=() n=() o=()
+		typeset i="" q="${APKGS[*]}"
 		( curl -L# "$AUR/packages/{${q// /,}}" | awk '/Details:/ {sub(/<\/h.?>/,""); print $4}' >/tmp/.aur_pkgver ) &
 		( pacman -Q "${APKGS[@]}" | awk '{print $2}' >/tmp/.pac_pkgver ) &
 		wait
 		while read -r line; do n+=("$line"); done < /tmp/.aur_pkgver
 		while read -r line; do o+=("$line"); done < /tmp/.pac_pkgver
 		for ((i=0; i < ${#APKGS[@]}; i++)); do
-			if [[ ${n[$i]} && ${o[$i]} && $(vercmp "${o[$i]}" "${n[$i]}") -gt 0 ]]; then
+			if [[ ${n[$i]} && ${o[$i]} && $(vercmp "${o[$i]}" "${n[$i]}") -lt 0 ]]; then
 				up+=("${APKGS[$i]}")
 				printf " %s \e[1m\e[31m%s \e[33m->\e[32m %s\e[0m\n" "${APKGS[$i]}" "${n[$i]}" "${o[$i]}"
 			fi
