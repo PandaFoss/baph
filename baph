@@ -2,22 +2,21 @@
 
 # simple package installs
 
-typeset -a APKGS=() PPKGS=()
-typeset -r BLD="$HOME/.cache/aur_builds"
 typeset -r AUR='https://aur.archlinux.org'
-typeset -r AURC="$AUR/cgit/aur.git/snapshot"
-typeset -g NOVIEW='' NOCONF='' AURONLY='' CACHE=1
-typeset -A DESC=([s]='search' [u]='update' [i]='installp')
+typeset -r BUILDDIR="$HOME/.cache/aur_builds"
+typeset -a PACPKGS=()
+typeset -a AURPKGS=()
+typeset -A DESC=([s]='search' [u]='update' [i]='install')
 typeset -A OPTS=([s]='RUN=search' [u]='RUN=update' [i]='RUN=installp' [n]='NOVIEW=--noview' [N]='NOCONF=--noconfirm' [a]='AURONLY=--auronly')
 
 use()
-{ # show the standard UNIX style help message..
+{ # show the standard help message..
 	if [[ $1 == '-v' ]]; then
 		cat << EOF
- baph v0.6
+ baph-VERSION
 EOF
 	else
-	cat <<EOF
+		cat << EOF
 
  baph - Simple helper to search, install, and update AUR packages
 
@@ -42,7 +41,7 @@ EOF
 	 search for AUR packages matching 'cmus'
 		 baph -s cmus
 
-	 update only the AUR packages on the system, skip view/confirm dialogs
+	 update all AUR packages on the system, skipping view/confirm dialogs
 		 baph -uanN
 
 EOF
@@ -52,7 +51,7 @@ EOF
 
 msg()
 { # print colour $1 :: then message $2 in bold, usage: msg "color" "text"
-	[[ $1 ]] && printf "$1::\e[0m \e[1m$2\e[0m\n" || printf "$2\n"
+	[[ $1 ]] && printf "%b::\e[0m \e[1m$2\e[0m\n" "$1" || printf "%s\n" "$2"
 }
 
 die()
@@ -62,32 +61,32 @@ die()
 
 get()
 { # install an AUR package.. usage: get "package"
-	pkg="$1"
-	(( CACHE )) || [[ -d "$BLD/$pkg" ]] && rm -rf "${BLD:?}/$pkg"
-	[[ -d "$BLD" ]] || mkdir -p "$BLD"
+	local pkg="$1"
 
-	if ! hash git >/dev/null 2>&1 || [[ ! -e $BLD/$pkg/PKGBUILD || $CACHE -eq 0 ]]; then
+	mkdir -p "$BUILDDIR"
+	rm -rf "${BUILDDIR:?}/$pkg"
+	cd "$BUILDDIR" || die "failed to change directory to build location"
+
+	if hash git >/dev/null 2>&1; then
+		msg '\e[34m' "Cloning \e[32m$pkg\e[0m\e[1m package repo..."
+		git clone "$AUR/$pkg" || die "failed to clone package repo: $AUR/$pkg"
+	else
 		msg '\e[34m' "Retrieving package: $pkg"
-		[[ -d "$BLD/$pkg" ]] && rm -rf "${BLD:?}/$pkg"
-		[[ -e "$BLD/$pkg.tar.gz" ]] && rm -rf "$BLD/$pkg.tar.gz"
-		if cd "$BLD" && { curl -LO -m 15 "$AURC/$pkg.tar.gz" || git clone "$AUR/$pkg"; }; then
-			if [[ -e "$BLD/$pkg.tar.gz" ]]; then
-				tar -xvf "$pkg.tar.gz" || die "failed to extract package archive: $pkg.tar.gz"
-				rm -rf "$BLD/$pkg.tar.gz"
-			fi
+		[[ -d "$BUILDDIR/$pkg" ]] && rm -rf "${BUILDDIR:?}/$pkg"
+		[[ -e "$BUILDDIR/$pkg.tar.gz" ]] && rm -rf "$BUILDDIR/$pkg.tar.gz"
+		if curl -LO -m 15 "$AUR/cgit/aur.git/snapshot/$pkg.tar.gz" && [[ -e "$BUILDDIR/$pkg.tar.gz" ]]; then
+			tar -xvf "$pkg.tar.gz" || die "failed to extract package archive: $pkg.tar.gz"
+			rm -rf "$BUILDDIR/$pkg.tar.gz"
 		else
-			die "failed to get package: $pkg"
+			die "failed to download requested package: $pkg"
 		fi
-	elif [[ -e "$BLD/$pkg/PKGBUILD" && -d "$BLD/$pkg/.git" ]]; then
-		msg '\e[34m' "Synchronizing \e[32m$pkg\e[0m\e[1m cache..."
-		{ cd "$BLD/$pkg" && git pull >/dev/null 2>&1; } || die "failed to update package repo: $AUR/$pkg"
 	fi
 
-	if [[ -r "$BLD/$pkg/PKGBUILD" ]] && cd "$BLD/$pkg"; then
-		view "$BLD/$pkg/PKGBUILD" || yesno "Continue building $pkg" || { (( CACHE )) || rm -rf "${BLD:?}/$pkg"; return 1;}
-		buildp "$BLD/$pkg/PKGBUILD" || return 1
+	if [[ -r "$BUILDDIR/$pkg/PKGBUILD" ]] && cd "$BUILDDIR/$pkg"; then
+		view "$BUILDDIR/$pkg/PKGBUILD" || yesno "Continue building $pkg" || { rm -rf "${BUILDDIR:?}/$pkg"; return 1;}
+		buildp "$BUILDDIR/$pkg/PKGBUILD" || return 1
 	else
-		die "$BLD/$pkg does not contain a PKGBUILD or it is not readable"
+		die "$BUILDDIR/$pkg does not contain a PKGBUILD or it is not readable"
 	fi
 
 	return 0
@@ -95,13 +94,13 @@ get()
 
 view()
 { # view PKGBUILD.. usage: view "/path/to/PKGBUILD"
-	[[ -z $NOVIEW ]] && yesno "View/Edit the PKGBUILD for $pkg" && { ${EDITOR:-vi} "$1"; return 1; }
+	[[ -z $NOVIEW ]] && yesno "View/Edit the PKGBUILD for $pkg" 1 && { ${EDITOR:-vi} "$1"; return 1; }
 	return 0
 }
 
 keys()
 { # import PGP keys from package.. usage: keys ${KEYS[@]}
-	for key in "$@"; do
+	for key; do
 		if ! pacman-key --list-keys | grep -q "$key"; then
 			msg '\e[33m' "Resolving missing pgp key for $pkg: $key"
 			if ! gpg --receive-keys "$key" && sudo pacman-key -r "$key" && sudo pacman-key --lsign-key "$key"; then
@@ -113,113 +112,131 @@ keys()
 
 deps()
 { # build package depends.. usage: deps ${DEPENDS[@]}
-	while (( $# > 0 )); do
-		dep="$(sed 's/[=<>]=\?[0-9.\-]*.*//g' <<< "$1")"
-		shift
+	for dep; do
+		dep="$(sed 's/[=<>]=\?[0-9.\-]*.*//g' <<< "$dep")"
 		if ! { pacman -Qsq "^$dep$" || pacman -Ssq "^$dep$"; } >/dev/null 2>&1; then
 			msg '\e[33m' "Resolving \e[32m$pkg\e[0m\e[1m AUR dependency: $dep"
 			get "$dep" || die "failed to build dependency $dep"
 		fi
 	done
-	cd "$BLD/$pkg" || die "failed to cd $BLD/$pkg"
+	cd "$BUILDDIR/$pkg" || die "failed to cd $BUILDDIR/$pkg"
 }
 
 yesno()
 { # ask confirmation if NOCONF is not set, usage: yesno "question"
-	[[ $NOCONF ]] && return 0 || read -re -p $'\e[34m::\e[0m \e[1m'"$1"$'? [Y/n]\e[0m ' c
+	[[ $NOCONF ]] && return 0
+	read -re -p $'\e[34m::\e[0m \e[1m'"$1"$'? [Y/n]\e[0m ' c
 	[[ -z $c || $c == 'y' || $c == 'Y' ]]
 }
 
 query()
 { # return key value $1 from json/dict $2, usage: query "key" "input"
-	awk -F'","' -v k="$1" '{
-	for (i=1; i <= NF; i++) { if ($i ~ k) print $i }
-	}' <<< "$2" | sed 's/.*'"$1"'":"\?\(.*\),\?"\?.*/\1/g; s/[,"]$//g; s/[\\%]//g; s/null,".*$/null/'
+	# specifically for the response given when querying the AUR for a search
+	awk -F'","' -v k="$1" '{ for (i=1; i <= NF; i++) { if ($i ~ k) print $i } }' <<< "$2" |
+		sed 's/.*'"$1"'":"\?\(.*\),\?"\?.*/\1/g; s/[,"]$//g; s/[\\%]//g; s/null,".*$/null/'
 }
 
 buildp()
 { # build package.. usage: buildp "/path/to/PKGBUILD"
-	typeset -i i o # in or out of array
+	# this function assumes that we're in the directory containing the PKGBUILD
+	typeset -i in out # in or out of array
 	typeset -a depends makedepends validpgpkeys # arrays
-	typeset t=""
+	typeset arrtext=""
 
-	while read -r l; do
-		[[ $l =~ ^[\ \	]*# ]] && continue # skip comments
-		case "$l" in
-			depends=*|makedepends=*|validpgpkeys=*) i=1; [[ $l == *')'* ]] && o=1 ;;
-			*')'*) (( i )) && o=1 ;;
+	# read the PKGBUILD and grab the depends, makedepends, and validpgpkeys
+	while read -r line; do
+		[[ $line =~ ^[\ \	]*# ]] && continue # skip comments
+		# determine if were in and/or out an array (including single line arrays)
+		case "$line" in
+			depends=*|makedepends=*|validpgpkeys=*)
+				in=1
+				[[ $line == *')'* ]] && out=1  # account for just a single line array
+				;;
+			*')'*)
+				(( in )) && out=1
+				;;
 		esac
-		(( i )) && { [[ $t ]] && t+=$'\n'"$l" || t="$l"; }
-		(( o )) && o=0 i=0
+		# if were in an array add/start the string
+		(( in )) && { [[ $arrtext ]] && arrtext+=$'\n'"$line" || arrtext="$line"; }
+		# if were now out of an array, reset both
+		(( out )) && out=0 in=0
 	done < "$1"
 
-	eval "$t" # better than `eval PKGBUILD` but still sub-optimal
-
+	# better than evaluating the whole PKGBUILD but still sub-optimal, ideally
+	# we get the 3 arrays filled with values we need to build the package
+	eval "$arrtext"
+	# keys (if any)
 	(( ${#validpgpkeys[@]} > 0 )) && keys "${validpgpkeys[@]}"
+	# dependencies
 	(( ${#depends[@]} || ${#makedepends[@]} )) && deps "${depends[@]}" "${makedepends[@]}"
-
+	# build and install it, upon success remove it
 	makepkg -sicr && { rm -rf ./*.tar.xz >/dev/null 2>&1 || return 0; }
 }
 
 search()
 { # search query the AUR, usage: search "query"
-	for q in "$@"; do
-		msg '\e[34m' "Searching the AUR for '$q'..."
-		typeset res=$(curl -Lsm 10 "$AUR"'/rpc.php?type=search&arg='"$q")
+	for q; do
+		msg '\e[34m' "Searching the AUR for '$q'...\n"
+		typeset res="$(curl -Lsm 10 "$AUR"'/rpc.php?type=search&arg='"$q")"
+
 		if [[ -z $res || $res == *'"resultcount":0'* ]]; then
 			printf "\e[1;31m:: \e[0mno results found\n"
 		else
-			typeset -i j=1
+			typeset -i i=1
 			typeset -a pkgs=()
-			while read -r i; do
-				n=$(query "Name" "$i")
-				v=$(query "Version" "$i")
-				d=$(query "Description" "$i")
+
+			while read -r key; do
+				n=$(query "Name" "$key")
+				v=$(query "Version" "$key")
+				d=$(query "Description" "$key")
 				(( ${#d} > ${COLUMNS:-$(tput cols)} )) && d=$(sed 's/\([\.,]\)/\1\\n   /' <<< "$d")
-				[[ $(query "OutOfDate" "$i") != null ]] && v+="\e[1;31m  (Out of Date!)"
-				printf "\e[1;33m%s\e[1;35m AUR/\e[1;37m%s \e[1;32m$v\n\e[0m    $d\n" "$j" "$n"
-				(( j++ ))
+				[[ $(query "OutOfDate" "$key") != null ]] && v+="\e[1;31m  (Out of Date!)"
+				printf "\e[1;33m%s\e[1;35m AUR/\e[1;37m%s \e[1;32m$v\n\e[0m    $d\n" "$i" "$n"
+				(( i++ ))
 				pkgs+=("${n//[()]/}")
 			done < <(sed 's/},{/\n/g' <<< "$res")
-			if (( j > 1 )) && read -re -p $'\n\nEnter package number(s) to install: ' id && [[ $id =~ [0-9] ]]; then
+
+			if (( i > 1 )) && read -re -p $'\n\nEnter package number(s) to install: ' id && [[ $id =~ [0-9] ]]; then
 				for num in $id; do
 					case $num in
 						''|*[!0-9]*) : ;;
-						*) APKGS+=("${pkgs[$((num - 1))]}") ;;
+						*) AURPKGS+=("${pkgs[$((num - 1))]}") ;;
 					esac
 				done
-				(( ${#APKGS[@]} == 0 )) || installp
+				(( ! ${#AURPKGS[@]} )) || installp
 			fi
 		fi
 	done
 }
 
 update()
-{ # check updates for each package, usage: update
-	if (( ${#APKGS[@]} == 0 )); then
-		while read -r l; do APKGS+=("$l"); done < <(pacman -Qqm 2>/dev/null)
+{ # check updates for each package
+	if (( ! ${#AURPKGS[@]} )); then
+		mapfile -t AURPKGS < <(pacman -Qqm 2>/dev/null)
 		[[ $AURONLY ]] || sudo pacman -Syyu $NOCONF
 	fi
 
-	if (( ${#APKGS[@]} > 0 )); then
+	if (( ${#AURPKGS[@]} )); then
 		msg '\e[34m' "Synchronizing AUR package versions..."
-		typeset -a up=() n=() o=()
-		typeset i="" q="${APKGS[*]}"
-		( curl -L# "$AUR/packages/{${q// /,}}" | awk '/Details:/ {sub(/<\/h.?>/,""); print $4}' >/tmp/.aur_pkgver ) &
-		( pacman -Q "${APKGS[@]}" | awk '{print $2}' >/tmp/.pac_pkgver ) &
-		wait
-		while read -r line; do n+=("$line"); done < /tmp/.aur_pkgver
-		while read -r line; do o+=("$line"); done < /tmp/.pac_pkgver
-		for ((i=0; i < ${#APKGS[@]}; i++)); do
-			if [[ ${n[$i]} && ${o[$i]} && $(vercmp "${o[$i]}" "${n[$i]}") -lt 0 ]]; then
-				up+=("${APKGS[$i]}")
-				printf " %s \e[1m\e[31m%s \e[33m->\e[32m %s\e[0m\n" "${APKGS[$i]}" "${n[$i]}" "${o[$i]}"
+		typeset -a needsupdate=() newv=() oldv=() latestver=()
+		typeset installed="${AURPKGS[*]}"
+		typeset -i i
+		mapfile -t newv < <(curl -#L "$AUR/packages/{${installed// /,}}" | awk '/Details:/ {sub(/<\/h.?>/,""); print $4}')
+		mapfile -t oldv < <(pacman -Q "${AURPKGS[@]}" | awk '{print $2}')
+
+		for ((i=0; i < ${#AURPKGS[@]}; i++)); do
+			if [[ ${newv[$i]} && ${oldv[$i]} && $(vercmp "${oldv[$i]}" "${newv[$i]}") -lt 0 ]]; then
+				needsupdate+=("${AURPKGS[$i]}")
+				latestver+=("${newv[$i]}")
+				printf " %s \e[1m\e[31m%s \e[33m->\e[32m %s\e[0m\n" "${AURPKGS[$i]}" "${oldv[$i]}" "${newv[$i]}"
 			fi
 		done
+
 		msg '\e[34m' "Starting AUR package upgrade..."
-		if (( ${#up[@]} > 0 )); then
-			printf "\n\e[1mPackages (%s)\e[0m %s\n\n" "${#up[@]}" "${up[*]}"
-			yesno "Proceed with package upgrade" && for i in "${up[@]}"; do get "$i"; done
+		if (( ${#needsupdate[@]} > 0 )); then
+			printf "\n\e[1mPackages (%s)\e[0m %s\n\n" "${#needsupdate[@]}" "${needsupdate[*]}"
+			for ((i=0; i < ${#needsupdate[@]}; i++)); do printf "%s" "${needsupdate[$i]}-${latestver[$i]}"; done
+			yesno "Proceed with package upgrade" && for pkg in "${needsupdate[@]}"; do get "$pkg"; done
 		else
 			msg '' " there is nothing to do"
 		fi
@@ -230,19 +247,18 @@ update()
 }
 
 installp()
-{ # loop over package array and install each.. usage: installp
-	typeset v=""
-	typeset -gx pkg
-
-	if (( ${#APKGS[@]} == 0 && ${#PPKGS[@]} == 0 )); then
-		die "no targets specified"
-	else
-		(( ${#AURONLY} == 0 && ${#PPKGS[@]} > 0 )) && { sudo pacman -S "${PPKGS[@]}" $NOCONF || exit 1; }
-		for i in "${APKGS[@]}"; do
-			v="$(curl -sLI -m 10 "$AUR/packages/$i" | awk 'NR==1 {print $2}')"
-			(( v == 200 )) || die "$v response from $AUR/packages/$i"$'\n\ncheck the package name is spelled correctly'
-			get "$i" || msg '\e[33m' "Exited $i build early"
+{ # loop over package array and install each
+	if (( ${#AURPKGS[@]} || ${#PACPKGS[@]} )); then
+		(( ! AURONLY && ${#PACPKGS[@]} )) && { sudo pacman -S "${PACPKGS[@]}" $NOCONF || exit 1; }
+		for pkg in "${AURPKGS[@]}"; do
+			if (( $(curl -sLI -m 10 "$AUR/packages/$pkg" | awk 'NR==1 {print $2}') == 200 )); then
+				get "$pkg" || msg '\e[33m' "Exited $pkg build early"
+			else
+				die "$v response from $AUR/packages/$pkg"$'\n\ncheck the package name is spelled correctly'
+			fi
 		done
+	else
+		die "no targets specified"
 	fi
 }
 
@@ -252,18 +268,18 @@ if (( ! UID )); then
 	die "do not run baph as root"
 elif (( ! $# )); then
 	die "no operation specified (use -h for help)"
-elif ! hash sudo pacman curl >/dev/null 2>&1; then
-	die "this requires to following packages: sudo pacman curl\n\n\toptional packages: git"
+elif ! hash sudo curl >/dev/null 2>&1; then
+	die "this requires to following packages: sudo, curl\n\n\toptional packages: git"
 else
 	RUN='' ARGS=''
-	for i in "$@"; do # shift long opts to short form
-		case "$i" in
+	for arg; do    # shift long opts to short form
+		case "$arg" in
 			--version|--help|--search|--install|--update|--noview|--auronly|--noconfirm)
-				[[ $i == '--noconfirm' ]] && i="${i^^}"
-				[[ $ARGS == *"${i:2:1}"* ]] || ARGS+="${i:1:2}" ;;
-			--*) die "invalid option: '$i'" ;;
-			-*) [[ $ARGS == *"${i:1:1}"* ]] || ARGS+="$i " ;;
-			*) [[ $ARGS == *"$i"* ]] || ARGS+="$i " ;;
+				[[ $arg == '--noconfirm' ]] && arg="${arg^^}"
+				[[ $ARGS == *"${arg:2:1}"* ]] || ARGS+="${arg:1:2}" ;;
+			--*) die "invalid option: '$arg'" ;;
+			-*) [[ $ARGS == *"${arg:1:1}"* ]] || ARGS+="$arg " ;;
+			*) [[ $ARGS == *"$arg"* ]] || ARGS+="$arg " ;;
 		esac
 	done
 	eval set -- "$ARGS"
@@ -281,8 +297,8 @@ else
 		(( $# > 0 )) || die "search requires a query"
 		$RUN "$@"
 	else
-		for i in "$@"; do
-			pacman -Ssq "^$i$" >/dev/null 2>&1 && PPKGS+=("$i") || APKGS+=("$i")
+		for arg; do
+			pacman -Ssq "^$arg$" >/dev/null 2>&1 && PACPKGS+=("$arg") || AURPKGS+=("$arg")
 		done
 		$RUN
 	fi
