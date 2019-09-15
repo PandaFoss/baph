@@ -1,0 +1,56 @@
+.TH BAPH 1 baph\-VERSION
+.SH NAME
+baph \- basic aur package helper
+.SH SYNOPSIS
+.B baph
+.RB [ \-hvsiunNa ]
+.SH DESCRIPTION
+baph is a small bash script that helps with searching, updating,
+and installing aur packages. It is not a package manager, actions like
+un\-installation will still require pacman.
+.P
+aur packages are user produced content, use the provided files at your own risk.
+.P
+baph does not allow running as root and follows the build process outlined here
+.B https://wiki.archlinux.org/index.php/Arch_User_Repository#Installing_packages
+.SH OPERATIONS
+.TP
+.B \-h, \-\-help
+prints a usage message.
+.TP
+.B \-v, \-\-version
+prints current version.
+.TP
+.B \-s, \-\-search
+search https://aur.archlinux.org for packages.
+.TP
+.B \-i, \-\-install
+install packages from the official repos or aur.
+.TP
+.B \-u, \-\-update
+update packages already installed on the system.
+.SH OPTIONS
+applies to \fIinstall\fR and \fIupdate\fR operations
+.TP
+.B \-n, \-\-noview
+skip options to view pkgbuild files when installing from the aur.
+.TP
+.B \-N, \-\-noconfirm
+skip confirmation prompts, also passed to pacman where used.
+.TP
+.B \-a, \-\-auronly
+only perform operation on aur packages, useful for updating.
+.SH EXAMPLES
+.TP
+install \fIgoogle-chrome\fR and \fIyay\fR
+.B baph \-i google-chrome yay
+.TP
+search the aur for packages matching \fIcmus\fR
+.B baph \-s cmus
+.TP
+update only aur packages and skip confirmation dialogs
+.B baph \-uanN
+.SH SEE ALSO
+.BR pkgbuild (1),
+.BR makepkg (1),
+.BR pacman (1)
